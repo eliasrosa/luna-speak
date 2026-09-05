@@ -19,10 +19,17 @@ logging.basicConfig(
 )
 log = logging.getLogger("lunaspeak")
 
+# lógica de política de voz, apartada em app/gate/ (extraível pra serviço próprio)
+from .gate.policy import decide as gate_decide  # noqa: E402
+gate_log = logging.getLogger("lunaspeak.gate")
+
 # contador de uso acumulado por engine (reinicia a cada boot do processo)
 ENGINE_COUNTS = {"edge": 0, "piper": 0}
 
 app = FastAPI(title="LunaSpeak", version="0.1.0")
+
+# Voice Gate — domínio de política de voz (app/gate), apartado do TTS.
+# Registro tardio no fim do módulo (após synth_and_send existir) evita ciclo.
 
 # --- config (env) ---
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -88,22 +95,26 @@ async def _send_voice(chat_id: str, ogg_path: str, caption: str | None) -> None:
         raise HTTPException(502, f"Telegram sendVoice falhou: {r.text[:200]}")
 
 
-@app.post("/say")
-async def say(req: SayRequest):
-    if not req.text.strip():
+async def synth_and_send(text: str, chat_id: str, caption: str | None = None) -> dict:
+    """Sintetiza `text` (Edge->Piper), converte e envia via Telegram sendVoice.
+
+    Núcleo reusável do /say: o handler HTTP e o Voice Gate (app/gate) chamam
+    esta função. Levanta em falha (o chamador decide o fallback).
+    """
+    if not text.strip():
         raise HTTPException(400, "text vazio")
     # gate de "resposta curta": texto acima do teto vira áudio longo e ruim de ouvir.
     # Recusamos com 413 e um payload estruturado para o chamador cair pra texto.
     # (Não resumimos aqui — este serviço não tem LLM; e não truncamos, que cortaria
     #  no meio de uma frase. Truncar/resumir/enviar-texto é decisão do orquestrador.)
-    if SAY_MAX_CHARS > 0 and len(req.text) > SAY_MAX_CHARS:
-        log.info("say recusado too_long chars=%d limit=%d", len(req.text), SAY_MAX_CHARS)
+    if SAY_MAX_CHARS > 0 and len(text) > SAY_MAX_CHARS:
+        log.info("say recusado too_long chars=%d limit=%d", len(text), SAY_MAX_CHARS)
         raise HTTPException(
             status_code=413,
             detail={
                 "ok": False,
                 "reason": "too_long",
-                "chars": len(req.text),
+                "chars": len(text),
                 "limit": SAY_MAX_CHARS,
             },
         )
@@ -116,19 +127,19 @@ async def say(req: SayRequest):
         try:
             if FORCE_PIPER:
                 raise RuntimeError("FORCE_PIPER ligado: pulando Edge-TTS")
-            await _edge_tts(req.text, ogg)  # 1) padrão: Francisca online
+            await _edge_tts(text, ogg)  # 1) padrão: Francisca online
         except Exception as e:
             # CA#2: registra o erro do Edge que causou o fallback (sem o texto do usuário)
             edge_error = f"{type(e).__name__}: {e}"
             log.warning("edge-tts falhou, caindo pro piper: %s", edge_error)
             engine = "piper"                # 2) fallback offline: Piper faber
-            _piper_tts(req.text, ogg)
-        await _send_voice(req.chat_id, ogg, req.caption)  # 3) envia voice message
+            _piper_tts(text, ogg)
+        await _send_voice(chat_id, ogg, caption)  # 3) envia voice message
         ENGINE_COUNTS[engine] = ENGINE_COUNTS.get(engine, 0) + 1
         # CA#1: log estruturado com engine + duração por request
         log.info(
             "say ok engine=%s duration_ms=%d chars=%d fallback_reason=%s",
-            engine, (time.perf_counter() - started) * 1000, len(req.text), edge_error or "-",
+            engine, (time.perf_counter() - started) * 1000, len(text), edge_error or "-",
         )
         return {"ok": True, "engine": engine, "duration_ms": round((time.perf_counter() - started) * 1000)}
     except Exception:
@@ -150,6 +161,11 @@ async def say(req: SayRequest):
             pass
 
 
+@app.post("/say")
+async def say(req: SayRequest):
+    return await synth_and_send(req.text, req.chat_id, req.caption)
+
+
 @app.get("/health")
 def health():
     return {
@@ -162,3 +178,31 @@ def health():
         "say_max_chars": SAY_MAX_CHARS,
         "engine_counts": ENGINE_COUNTS,
     }
+
+
+# --- Voice Gate: política de voz (o "quando" da issue #3) ---
+# A LÓGICA (decisão + normalização) vive apartada em app/gate/. Só o handler HTTP
+# mora aqui, pra reusar `app` e `synth_and_send` sem import tardio nem ciclo.
+class MaybeRequest(BaseModel):
+    text: str
+    chat_id: str
+    intent: str = "auto"          # "explicit" (usuário pediu voz) | "auto"
+    channel: str = "telegram"
+    caption: str | None = None
+
+
+@app.post("/voice/maybe")
+async def voice_maybe(req: MaybeRequest):
+    """Entrada do orquestrador (Kiro): 'cabe áudio?'. Nunca é o caminho crítico
+    da resposta — o Kiro já entregou o texto pelo seu próprio canal."""
+    d = gate_decide(req.text, req.intent, req.channel, SAY_MAX_CHARS)
+    if not d.audio:
+        gate_log.info("gate decided=text reason=%s chars=%d", d.reason, len(req.text))
+        return {"decided": "text", "reason": d.reason}
+    try:
+        result = await synth_and_send(d.text, req.chat_id, req.caption)
+    except Exception as e:  # o gate absorve a falha do TTS: 1 ponto de falha pro Kiro
+        gate_log.warning("gate approved but synth failed: %s: %s", type(e).__name__, e)
+        return {"decided": "text", "reason": "service_down"}
+    gate_log.info("gate decided=audio reason=%s engine=%s", d.reason, result.get("engine"))
+    return {"decided": "audio", "reason": d.reason, **result}

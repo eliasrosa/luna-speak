@@ -53,5 +53,40 @@ Deploy via `docker-compose-zimaos.yml` (imagem local, sem registry). Colocar o `
 - `POST /say { text, chat_id }` — sintetiza e envia voice message. Retorna `{ok, engine, duration}`.
 - `GET /health` — status + engines disponíveis (inclui `piper_available`, `token_configured`, `force_piper`).
 
+## Escolha de voz
+
+A voz do Edge-TTS é configurável pela env `EDGE_VOICE` — **troca sem rebuild**:
+edite o `.env` (ou passe a env na subida) e reinicie o container. O fallback
+offline continua sendo o Piper `faber` automaticamente, independente da voz do Edge.
+
+```bash
+# trocar a voz padrão sem rebuildar a imagem
+EDGE_VOICE=pt-BR-ThalitaNeural docker compose up
+# ou, persistente: edite EDGE_VOICE no .env e `docker compose restart`
+```
+
+Confirme a voz ativa no `GET /health` (campo `edge_voice`).
+
+### Vozes disponíveis
+
+Vozes **femininas nativas pt-BR** do Edge-TTS:
+
+| `EDGE_VOICE`             | Descrição                                  |
+|--------------------------|--------------------------------------------|
+| `pt-BR-FranciscaNeural`  | Feminina pt-BR, natural — **padrão**       |
+| `pt-BR-ThalitaNeural`    | Feminina pt-BR, timbre alternativo         |
+
+Vozes **multilíngues** (falam pt com sotaque levemente não-nativo, timbre mais
+"assistente"):
+
+| `EDGE_VOICE`                 | Descrição                                  |
+|------------------------------|--------------------------------------------|
+| `en-US-AvaMultilingual`      | Multilíngue, expressiva                     |
+| `en-US-EmmaMultilingual`     | Multilíngue, conversacional                 |
+
+> Para a lista completa de vozes suportadas: `edge-tts --list-voices`.
+> O Piper (fallback offline) usa sempre `pt_BR-faber-medium` (masculina) e **não**
+> é afetado por `EDGE_VOICE`.
+
 ## Segurança
 - `TELEGRAM_BOT_TOKEN` só no `.env` (gitignored) / secrets. Nunca versionado.

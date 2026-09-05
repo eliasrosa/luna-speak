@@ -1,0 +1,45 @@
+name: Deploy ZimaOS
+
+# CD por runner self-hosted no ZimaOS (mesmo modelo do wallet-app / roms-manager-server).
+# Enquanto não houver runner dedicado, o deploy é manual: scripts/deploy-manual.sh.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-zimaos
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, zimaos, luna-speak]
+    env:
+      APP_DIR: /var/lib/casaos/apps/luna-speak
+      IMAGE: luna-speak:latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build da imagem (local, sem registry)
+        run: docker build -t "${IMAGE}" .
+
+      - name: Instala compose e gera .env de produção
+        run: |
+          mkdir -p "${APP_DIR}"
+          cp docker-compose-zimaos.yml "${APP_DIR}/docker-compose.yml"
+          umask 077
+          cat > "${APP_DIR}/.env" <<EOF
+          TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+          EDGE_VOICE=${{ secrets.EDGE_VOICE || 'pt-BR-FranciscaNeural' }}
+          EDGE_TIMEOUT=${{ secrets.EDGE_TIMEOUT || '8' }}
+          OPUS_BITRATE=${{ secrets.OPUS_BITRATE || '32k' }}
+          FORCE_PIPER=
+          EOF
+
+      - name: docker compose up
+        run: cd "${APP_DIR}" && docker compose up -d --force-recreate --remove-orphans
+
+      - name: Health check
+        run: |
+          sleep 3
+          curl -fsS http://127.0.0.1:8093/health

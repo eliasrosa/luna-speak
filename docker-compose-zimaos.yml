@@ -1,13 +1,32 @@
-# Produção no ZimaOS (imagem local, sem registry)
-# Deploy: copiar pro APP_DIR do CasaOS, colocar .env ao lado, docker compose up -d
+# Produção no ZimaOS — imagem local, sem registry (mesmo padrão do wallet-app / roms-manager-server)
+# Deploy: via scripts/deploy-manual.sh (do host) OU o workflow deploy-zimaos.yaml (runner).
+# O compose é copiado para APP_DIR (/var/lib/casaos/apps/luna-speak) com o .env de prod ao lado.
 services:
   lunaspeak:
-    image: lunaspeak:latest
+    build: .
+    image: luna-speak:latest
+    pull_policy: never
     container_name: lunaspeak
     ports:
       - "8093:8080"
     env_file: .env
     restart: unless-stopped
-    x-casaos:
-      title: LunaSpeak
-      description: Microserviço TTS (voz do assistente) com fallback Edge-TTS -> Piper
+
+# x-casaos é chave TOP-LEVEL do compose (o CasaOS lê aqui, não dentro do serviço).
+# 'hostname' fica fora do repo público (é o IP do host) — o deploy injeta se necessário.
+x-casaos:
+  architecture:
+    - amd64
+  main: lunaspeak
+  scheme: http
+  port_map: "8093"
+  index: /health
+  is_uncontrolled: false
+  store_app_id: luna-speak
+  title:
+    custom: LunaSpeak
+  tagline:
+    custom: Voz do assistente (TTS) no Telegram
+  description:
+    custom: Microserviço TTS com fallback Edge-TTS (Francisca) -> Piper (offline).
+  category: Utilities

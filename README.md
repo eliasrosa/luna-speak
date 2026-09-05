@@ -32,19 +32,26 @@ POST /say { text, chat_id }
 
 ### Local (dev)
 ```bash
-cp .env.example .env   # preencher TELEGRAM_BOT_TOKEN
+cp .env.example .env   # OBRIGATÓRIO: preencher TELEGRAM_BOT_TOKEN
 docker compose up --build
-# POST http://localhost:8080/say
-curl -X POST localhost:8080/say -H 'Content-Type: application/json' \
+# POST http://localhost:8033/say
+curl -X POST localhost:8033/say -H 'Content-Type: application/json' \
   -d '{"text":"Oi Elias!","chat_id":"<seu_chat_id>"}'
 ```
+
+> ⚠️ O `docker-compose.yml` usa `env_file: .env`. Se você pular o `cp .env.example .env`,
+> o `docker compose up` falha com `env file .env not found`. Copie o `.env` **antes** de subir.
+
+**Validar o fallback Piper sem cortar a rede:** ligue `FORCE_PIPER=1` no `.env` (ou
+`FORCE_PIPER=1 docker compose up`). Com a flag, o `/say` pula o Edge-TTS e vai direto pro
+Piper — a resposta volta com `"engine":"piper"`. Deixe vazio em produção.
 
 ### ZimaOS (produção)
 Deploy via `docker-compose-zimaos.yml` (imagem local, sem registry). Colocar o `.env` ao lado do compose no diretório do app e `docker compose up -d`.
 
 ## Endpoints
 - `POST /say { text, chat_id }` — sintetiza e envia voice message. Retorna `{ok, engine, duration}`.
-- `GET /health` — status + engines disponíveis.
+- `GET /health` — status + engines disponíveis (inclui `piper_available`, `token_configured`, `force_piper`).
 
 ## Segurança
 - `TELEGRAM_BOT_TOKEN` só no `.env` (gitignored) / secrets. Nunca versionado.

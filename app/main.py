@@ -1,13 +1,26 @@
 """LunaSpeak — microserviço TTS com fallback (Edge-TTS Francisca -> Piper faber) e envio via Telegram sendVoice."""
 import asyncio
+import logging
 import os
 import subprocess
 import tempfile
+import time
 import uuid
 
 import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+
+# --- observabilidade ---
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+log = logging.getLogger("lunaspeak")
+
+# contador de uso acumulado por engine (reinicia a cada boot do processo)
+ENGINE_COUNTS = {"edge": 0, "piper": 0}
 
 app = FastAPI(title="LunaSpeak", version="0.1.0")
 
@@ -78,16 +91,33 @@ async def say(req: SayRequest):
     workdir = tempfile.mkdtemp(prefix="lunaspeak_")
     ogg = os.path.join(workdir, f"{uuid.uuid4().hex}.ogg")
     engine = "edge"
+    edge_error = None  # motivo que disparou o fallback (tipo + mensagem), se houver
+    started = time.perf_counter()
     try:
         try:
             if FORCE_PIPER:
                 raise RuntimeError("FORCE_PIPER ligado: pulando Edge-TTS")
             await _edge_tts(req.text, ogg)  # 1) padrão: Francisca online
-        except Exception:
+        except Exception as e:
+            # CA#2: registra o erro do Edge que causou o fallback (sem o texto do usuário)
+            edge_error = f"{type(e).__name__}: {e}"
+            log.warning("edge-tts falhou, caindo pro piper: %s", edge_error)
             engine = "piper"                # 2) fallback offline: Piper faber
             _piper_tts(req.text, ogg)
         await _send_voice(req.chat_id, ogg, req.caption)  # 3) envia voice message
-        return {"ok": True, "engine": engine}
+        ENGINE_COUNTS[engine] = ENGINE_COUNTS.get(engine, 0) + 1
+        # CA#1: log estruturado com engine + duração por request
+        log.info(
+            "say ok engine=%s duration_ms=%d chars=%d fallback_reason=%s",
+            engine, (time.perf_counter() - started) * 1000, len(req.text), edge_error or "-",
+        )
+        return {"ok": True, "engine": engine, "duration_ms": round((time.perf_counter() - started) * 1000)}
+    except Exception:
+        log.exception(
+            "say erro engine=%s duration_ms=%d",
+            engine, (time.perf_counter() - started) * 1000,
+        )
+        raise
     finally:
         # limpeza best-effort
         for f in os.listdir(workdir):
@@ -110,4 +140,5 @@ def health():
         "piper_available": os.path.exists(PIPER_BIN),
         "token_configured": bool(BOT_TOKEN),
         "force_piper": FORCE_PIPER,
+        "engine_counts": ENGINE_COUNTS,
     }

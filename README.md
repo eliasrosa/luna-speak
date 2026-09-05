@@ -50,8 +50,8 @@ Piper — a resposta volta com `"engine":"piper"`. Deixe vazio em produção.
 Deploy via `docker-compose-zimaos.yml` (imagem local, sem registry). Colocar o `.env` ao lado do compose no diretório do app e `docker compose up -d`.
 
 ## Endpoints
-- `POST /say { text, chat_id }` — sintetiza e envia voice message. Retorna `{ok, engine, duration}`.
-- `GET /health` — status + engines disponíveis (inclui `piper_available`, `token_configured`, `force_piper`).
+- `POST /say { text, chat_id }` — sintetiza e envia voice message. Retorna `{ok, engine, duration}`. Se o `text` passar de `SAY_MAX_CHARS`, responde **HTTP 413** com `{ok:false, reason:"too_long", chars, limit}` e **não** gera áudio (ver "Gate de resposta curta").
+- `GET /health` — status + engines disponíveis (inclui `piper_available`, `token_configured`, `force_piper`, `say_max_chars`).
 
 ## Escolha de voz
 
@@ -87,6 +87,28 @@ Vozes **multilíngues** (falam pt com sotaque levemente não-nativo, timbre mais
 > Para a lista completa de vozes suportadas: `edge-tts --list-voices`.
 > O Piper (fallback offline) usa sempre `pt_BR-faber-medium` (masculina) e **não**
 > é afetado por `EDGE_VOICE`.
+
+## Gate de resposta curta
+
+Áudio de resposta longa é ruim de ouvir; o serviço foca em respostas curtas. A env
+`SAY_MAX_CHARS` define o **teto de caracteres** do `text` — **configurável sem rebuild**:
+
+```bash
+SAY_MAX_CHARS=600 docker compose up     # ~600 chars ≈ até ~1 min de fala (default)
+SAY_MAX_CHARS=0   docker compose up      # desliga o gate (aceita qualquer tamanho)
+```
+
+Quando o `text` passa do teto, o `/say` responde **HTTP 413** e **não** sintetiza:
+
+```json
+{ "ok": false, "reason": "too_long", "chars": 812, "limit": 600 }
+```
+
+Esse 413 é um **sinal pro chamador (o orquestrador) cair pra texto** — mandar a
+resposta escrita em vez de áudio. O LunaSpeak deliberadamente **não** trunca (cortaria
+no meio de uma frase) nem resume (este serviço não tem LLM): truncar, resumir ou enviar
+texto é decisão de quem chama o `/say`. Confirme o teto ativo no `GET /health`
+(campo `say_max_chars`).
 
 ## Segurança
 - `TELEGRAM_BOT_TOKEN` só no `.env` (gitignored) / secrets. Nunca versionado.

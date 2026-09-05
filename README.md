@@ -50,8 +50,8 @@ Piper — a resposta volta com `"engine":"piper"`. Deixe vazio em produção.
 Deploy via `docker-compose-zimaos.yml` (imagem local, sem registry). Colocar o `.env` ao lado do compose no diretório do app e `docker compose up -d`.
 
 ## Endpoints
-- `POST /say { text, chat_id }` — sintetiza e envia voice message. Retorna `{ok, engine, duration}`. Se o `text` passar de `SAY_MAX_CHARS`, responde **HTTP 413** com `{ok:false, reason:"too_long", chars, limit}` e **não** gera áudio (ver "Gate de resposta curta").
-- `GET /health` — status + engines disponíveis (inclui `piper_available`, `token_configured`, `force_piper`, `say_max_chars`).
+- `POST /say { text, chat_id, engine? }` — sintetiza e envia voice message. Retorna `{ok, engine, duration}`. Se o `text` passar de `SAY_MAX_CHARS`, responde **HTTP 413** com `{ok:false, reason:"too_long", chars, limit}` e **não** gera áudio (ver "Gate de resposta curta"). `engine` (`auto`|`offline`, default `auto`) escolhe a engine — ver "Modo offline".
+- `GET /health` — status + engines disponíveis (inclui `piper_available`, `token_configured`, `force_piper`, `say_max_chars`, `engines`).
 
 ## Escolha de voz
 
@@ -109,6 +109,32 @@ resposta escrita em vez de áudio. O LunaSpeak deliberadamente **não** trunca (
 no meio de uma frase) nem resume (este serviço não tem LLM): truncar, resumir ou enviar
 texto é decisão de quem chama o `/say`. Confirme o teto ativo no `GET /health`
 (campo `say_max_chars`).
+
+## Modo offline (`engine`)
+
+`POST /say` e `POST /voice/maybe` aceitam um parâmetro opcional `engine`:
+
+| `engine`  | Comportamento                                                        |
+|-----------|----------------------------------------------------------------------|
+| `auto`    | **default** — tenta o Edge-TTS (online) e cai pro Piper por **falha** |
+| `offline` | pula o Edge e sintetiza **direto no Piper local** — nenhuma chamada de rede ao Edge |
+
+```jsonc
+POST /say      { "text": "...", "chat_id": "<CHAT_ID>", "engine": "offline" }
+POST /voice/maybe { "text": "...", "chat_id": "<CHAT_ID>", "intent": "explicit", "engine": "offline" }
+```
+
+Use `offline` quando a rede estiver instável, por privacidade (não bater em servidor
+externo), ou pra cortar latência de rede. `engine` inválido → **HTTP 400**
+`{ok:false, reason:"invalid_engine", allowed:["auto","offline"]}`.
+
+**Contrato sticky — o estado mora no orquestrador, não no serviço.** O LunaSpeak é
+**stateless** quanto ao modo: o override é por request. Quem liga/desliga o "modo
+offline" é o **orquestrador** (fora deste repo), que passa `engine=offline` em **cada**
+chamada enquanto o modo estiver ativo. O modo é persistente do lado do orquestrador
+(liga por comando, permanece até desligar; sem timeout automático); o default é `auto`.
+Isto é ortogonal ao gate de tamanho (`SAY_MAX_CHARS`) e ao gate de ativação: `engine`
+só escolhe **qual** engine sintetiza, não **se** sintetiza.
 
 ## Segurança
 - `TELEGRAM_BOT_TOKEN` só no `.env` (gitignored) / secrets. Nunca versionado.

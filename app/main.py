@@ -45,11 +45,27 @@ SAY_MAX_CHARS = int(os.environ.get("SAY_MAX_CHARS", "600"))
 # hook de teste: força o fallback Piper (pula o Edge-TTS) sem precisar cortar a rede
 FORCE_PIPER = os.environ.get("FORCE_PIPER", "").lower() in ("1", "true", "yes")
 
+# override de engine por request (#18): "auto" = comportamento atual (Edge -> fallback
+# Piper por falha); "offline" = pula o Edge e sintetiza direto no Piper local (rede
+# instável / privacidade / cortar latência). O serviço é STATELESS quanto a isso — o
+# "modo offline" sticky mora no orquestrador, que passa engine=offline em cada chamada.
+VALID_ENGINES = ("auto", "offline")
+
+
+def _validate_engine(engine: str) -> str:
+    if engine not in VALID_ENGINES:
+        raise HTTPException(
+            status_code=400,
+            detail={"ok": False, "reason": "invalid_engine", "engine": engine, "allowed": list(VALID_ENGINES)},
+        )
+    return engine
+
 
 class SayRequest(BaseModel):
     text: str
     chat_id: str
     caption: str | None = None
+    engine: str = "auto"          # "auto" (Edge->Piper por falha) | "offline" (só Piper)
 
 
 def _to_ogg(src: str, dst: str) -> None:
@@ -95,12 +111,16 @@ async def _send_voice(chat_id: str, ogg_path: str, caption: str | None) -> None:
         raise HTTPException(502, f"Telegram sendVoice falhou: {r.text[:200]}")
 
 
-async def synth_and_send(text: str, chat_id: str, caption: str | None = None) -> dict:
+async def synth_and_send(text: str, chat_id: str, caption: str | None = None, engine: str = "auto") -> dict:
     """Sintetiza `text` (Edge->Piper), converte e envia via Telegram sendVoice.
 
     Núcleo reusável do /say: o handler HTTP e o Voice Gate (app/gate) chamam
     esta função. Levanta em falha (o chamador decide o fallback).
+
+    `engine`: "auto" tenta o Edge-TTS e cai pro Piper por FALHA; "offline" pula o
+    Edge e sintetiza direto no Piper local (nenhuma chamada de rede ao Edge).
     """
+    _validate_engine(engine)
     if not text.strip():
         raise HTTPException(400, "text vazio")
     # gate de "resposta curta": texto acima do teto vira áudio longo e ruim de ouvir.
@@ -120,32 +140,36 @@ async def synth_and_send(text: str, chat_id: str, caption: str | None = None) ->
         )
     workdir = tempfile.mkdtemp(prefix="lunaspeak_")
     ogg = os.path.join(workdir, f"{uuid.uuid4().hex}.ogg")
-    engine = "edge"
     edge_error = None  # motivo que disparou o fallback (tipo + mensagem), se houver
     started = time.perf_counter()
     try:
-        try:
-            if FORCE_PIPER:
-                raise RuntimeError("FORCE_PIPER ligado: pulando Edge-TTS")
-            await _edge_tts(text, ogg)  # 1) padrão: Francisca online
-        except Exception as e:
-            # CA#2: registra o erro do Edge que causou o fallback (sem o texto do usuário)
-            edge_error = f"{type(e).__name__}: {e}"
-            log.warning("edge-tts falhou, caindo pro piper: %s", edge_error)
-            engine = "piper"                # 2) fallback offline: Piper faber
+        if FORCE_PIPER or engine == "offline":
+            # caminho offline EXPLÍCITO (não é o fallback por falha): pula o Edge e
+            # sintetiza direto no Piper. Nenhuma chamada de rede ao Edge-TTS.
+            engine_used = "piper"
             _piper_tts(text, ogg)
+        else:
+            engine_used = "edge"
+            try:
+                await _edge_tts(text, ogg)  # 1) padrão: Francisca online
+            except Exception as e:
+                # CA#2: registra o erro do Edge que causou o fallback (sem o texto do usuário)
+                edge_error = f"{type(e).__name__}: {e}"
+                log.warning("edge-tts falhou, caindo pro piper: %s", edge_error)
+                engine_used = "piper"       # 2) fallback offline: Piper faber
+                _piper_tts(text, ogg)
         await _send_voice(chat_id, ogg, caption)  # 3) envia voice message
-        ENGINE_COUNTS[engine] = ENGINE_COUNTS.get(engine, 0) + 1
+        ENGINE_COUNTS[engine_used] = ENGINE_COUNTS.get(engine_used, 0) + 1
         # CA#1: log estruturado com engine + duração por request
         log.info(
-            "say ok engine=%s duration_ms=%d chars=%d fallback_reason=%s",
-            engine, (time.perf_counter() - started) * 1000, len(text), edge_error or "-",
+            "say ok engine=%s mode=%s duration_ms=%d chars=%d fallback_reason=%s",
+            engine_used, engine, (time.perf_counter() - started) * 1000, len(text), edge_error or "-",
         )
-        return {"ok": True, "engine": engine, "duration_ms": round((time.perf_counter() - started) * 1000)}
+        return {"ok": True, "engine": engine_used, "duration_ms": round((time.perf_counter() - started) * 1000)}
     except Exception:
         log.exception(
             "say erro engine=%s duration_ms=%d",
-            engine, (time.perf_counter() - started) * 1000,
+            engine_used, (time.perf_counter() - started) * 1000,
         )
         raise
     finally:
@@ -163,7 +187,7 @@ async def synth_and_send(text: str, chat_id: str, caption: str | None = None) ->
 
 @app.post("/say")
 async def say(req: SayRequest):
-    return await synth_and_send(req.text, req.chat_id, req.caption)
+    return await synth_and_send(req.text, req.chat_id, req.caption, req.engine)
 
 
 @app.get("/health")
@@ -176,6 +200,7 @@ def health():
         "token_configured": bool(BOT_TOKEN),
         "force_piper": FORCE_PIPER,
         "say_max_chars": SAY_MAX_CHARS,
+        "engines": list(VALID_ENGINES),
         "engine_counts": ENGINE_COUNTS,
     }
 
@@ -189,18 +214,20 @@ class MaybeRequest(BaseModel):
     intent: str = "auto"          # "explicit" (usuário pediu voz) | "auto"
     channel: str = "telegram"
     caption: str | None = None
+    engine: str = "auto"          # "auto" (Edge->Piper por falha) | "offline" (só Piper)
 
 
 @app.post("/voice/maybe")
 async def voice_maybe(req: MaybeRequest):
     """Entrada do orquestrador (Kiro): 'cabe áudio?'. Nunca é o caminho crítico
     da resposta — o Kiro já entregou o texto pelo seu próprio canal."""
+    _validate_engine(req.engine)  # 400 em engine inválido, antes de decidir
     d = gate_decide(req.text, req.intent, req.channel, SAY_MAX_CHARS)
     if not d.audio:
         gate_log.info("gate decided=text reason=%s chars=%d", d.reason, len(req.text))
         return {"decided": "text", "reason": d.reason}
     try:
-        result = await synth_and_send(d.text, req.chat_id, req.caption)
+        result = await synth_and_send(d.text, req.chat_id, req.caption, req.engine)
     except Exception as e:  # o gate absorve a falha do TTS: 1 ponto de falha pro Kiro
         gate_log.warning("gate approved but synth failed: %s: %s", type(e).__name__, e)
         return {"decided": "text", "reason": "service_down"}

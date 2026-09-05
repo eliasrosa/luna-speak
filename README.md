@@ -52,7 +52,8 @@ Deploy via `docker-compose-zimaos.yml` (imagem local, sem registry). Colocar o `
 ## Endpoints
 - `POST /say { text, chat_id, engine? }` — sintetiza e envia voice message. Retorna `{ok, engine, duration}`. Se o `text` passar de `SAY_MAX_CHARS`, responde **HTTP 413** com `{ok:false, reason:"too_long", chars, limit}` e **não** gera áudio (ver "Gate de resposta curta"). `engine` (`auto`|`offline`, default `auto`) escolhe a engine — ver "Modo offline".
 - `POST /voice/maybe { text, chat_id, intent?, channel?, engine? }` — entrada do **orquestrador**: aplica o gate de política ("cabe áudio?") e, se aprovar, sintetiza e envia. Retorna `{decided:"audio", engine, duration_ms, reason}` ou `{decided:"text", reason}` (`reason` ∈ `too_long` | `has_code_or_table` | `empty_after_normalize` | `unsupported_channel:<x>` | `service_down`). `intent` = `explicit` (usuário pediu voz) | `auto` (conversacional, default).
-- `GET /health` — status + engines disponíveis (inclui `edge_voice`, `piper_available`, `token_configured`, `force_piper`, `say_max_chars`, `engines`).
+- `GET /health` — status + engines disponíveis (inclui `edge_voice`, `piper_available`, `token_configured`, `force_piper`, `say_max_chars`, `engines`, `global_engine`).
+- `POST /mode { engine }` — grava o **estado global** de engine do serviço (`auto`|`offline`), **persistente** entre restarts. `GET /mode` devolve o estado vigente. Ver "Modo offline".
 
 ## Configuração (env)
 
@@ -161,11 +162,28 @@ Use `offline` quando a rede estiver instável, por privacidade (não bater em se
 externo), ou pra cortar latência de rede. `engine` inválido → **HTTP 400**
 `{ok:false, reason:"invalid_engine", allowed:["auto","offline"]}`.
 
-**Contrato sticky — o estado mora no orquestrador, não no serviço.** O LunaSpeak é
-**stateless** quanto ao modo: o override é por request. Quem liga/desliga o "modo
-offline" é o **orquestrador** (fora deste repo), que passa `engine=offline` em **cada**
-chamada enquanto o modo estiver ativo. O modo é persistente do lado do orquestrador
-(liga por comando, permanece até desligar; sem timeout automático); o default é `auto`.
+### Estado global + precedência (toggle)
+
+O modo tem duas formas de ser escolhido, com **precedência clara**:
+
+**request > estado global > default de fábrica (`auto`)**
+
+- **Por request** (override pontual): mande `engine` no `/say` ou `/voice/maybe`. Vence sempre.
+- **Estado global** (persistente no serviço): `POST /mode { "engine": "offline" }` liga o
+  modo pra **todos** os requests que **não** mandarem `engine`; `GET /mode` (ou o campo
+  `global_engine` no `/health`) mostra o vigente. O estado é gravado num `state.json` num
+  volume (`STATE_DIR`, default `/data`) e **sobrevive a restart/recreate** do container.
+- **Default de fábrica:** `auto` (quando não há estado gravado).
+
+```jsonc
+POST /mode { "engine": "offline" }   // liga o modo offline pro serviço todo
+GET  /mode                            // { "engine": "offline", "precedence": "request > global > factory(auto)" }
+```
+
+Assim o **orquestrador não precisa manter estado**: chama `/mode` uma vez ao ligar/desligar,
+em vez de repetir `engine=offline` em toda chamada. `engine` inválido → **HTTP 400**
+`{ok:false, reason:"invalid_engine", allowed:["auto","offline"]}`.
+
 Isto é ortogonal ao gate de tamanho (`SAY_MAX_CHARS`) e ao gate de ativação: `engine`
 só escolhe **qual** engine sintetiza, não **se** sintetiza.
 

@@ -61,11 +61,49 @@ def _validate_engine(engine: str) -> str:
     return engine
 
 
+# estado GLOBAL de engine, persistente no serviço (#22). Supersede o "sticky no
+# orquestrador" da #18: liga uma vez via POST /mode, vale pra todos os requests que
+# NÃO mandarem engine, e sobrevive a restart (gravado num arquivo em volume).
+# Precedência ao sintetizar: engine do request (explícito) > estado global > "auto".
+STATE_DIR = os.environ.get("STATE_DIR", "/data")
+_STATE_FILE = os.path.join(STATE_DIR, "state.json")
+_FACTORY_ENGINE = "auto"
+
+
+def _load_global_engine() -> str:
+    """Lê o estado global do arquivo de volume; default de fábrica se ausente/ilegível."""
+    try:
+        import json
+        with open(_STATE_FILE, encoding="utf-8") as f:
+            eng = json.load(f).get("engine")
+        return eng if eng in VALID_ENGINES else _FACTORY_ENGINE
+    except (OSError, ValueError):
+        return _FACTORY_ENGINE
+
+
+def _save_global_engine(engine: str) -> None:
+    """Persiste o estado global no arquivo de volume (best-effort, cria o dir)."""
+    import json
+    os.makedirs(STATE_DIR, exist_ok=True)
+    tmp = _STATE_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"engine": engine}, f)
+    os.replace(tmp, _STATE_FILE)  # troca atômica
+
+
+GLOBAL_ENGINE = _load_global_engine()
+
+
+def _resolve_engine(req_engine: str | None) -> str:
+    """Precedência: engine explícito do request vence; senão o estado global."""
+    return _validate_engine(req_engine) if req_engine is not None else GLOBAL_ENGINE
+
+
 class SayRequest(BaseModel):
     text: str
     chat_id: str
     caption: str | None = None
-    engine: str = "auto"          # "auto" (Edge->Piper por falha) | "offline" (só Piper)
+    engine: str | None = None     # omitido -> estado global; "auto"|"offline" = override
 
 
 def _to_ogg(src: str, dst: str) -> None:
@@ -187,7 +225,32 @@ async def synth_and_send(text: str, chat_id: str, caption: str | None = None, en
 
 @app.post("/say")
 async def say(req: SayRequest):
-    return await synth_and_send(req.text, req.chat_id, req.caption, req.engine)
+    return await synth_and_send(req.text, req.chat_id, req.caption, _resolve_engine(req.engine))
+
+
+class ModeRequest(BaseModel):
+    engine: str                   # "auto" | "offline"
+
+
+@app.post("/mode")
+def set_mode(req: ModeRequest):
+    """Grava o estado GLOBAL de engine do serviço (persistente entre restarts).
+
+    Vale pra todo request que NÃO mandar `engine`. Um `engine` explícito no
+    request continua vencendo (override pontual, #18). Default de fábrica: auto.
+    """
+    global GLOBAL_ENGINE
+    _validate_engine(req.engine)
+    _save_global_engine(req.engine)
+    GLOBAL_ENGINE = req.engine
+    log.info("mode set global_engine=%s", GLOBAL_ENGINE)
+    return {"ok": True, "engine": GLOBAL_ENGINE}
+
+
+@app.get("/mode")
+def get_mode():
+    """Estado global vigente + precedência efetiva."""
+    return {"engine": GLOBAL_ENGINE, "precedence": "request > global > factory(auto)"}
 
 
 @app.get("/health")
@@ -201,6 +264,7 @@ def health():
         "force_piper": FORCE_PIPER,
         "say_max_chars": SAY_MAX_CHARS,
         "engines": list(VALID_ENGINES),
+        "global_engine": GLOBAL_ENGINE,
         "engine_counts": ENGINE_COUNTS,
     }
 
@@ -214,20 +278,20 @@ class MaybeRequest(BaseModel):
     intent: str = "auto"          # "explicit" (usuário pediu voz) | "auto"
     channel: str = "telegram"
     caption: str | None = None
-    engine: str = "auto"          # "auto" (Edge->Piper por falha) | "offline" (só Piper)
+    engine: str | None = None     # omitido -> estado global; "auto"|"offline" = override
 
 
 @app.post("/voice/maybe")
 async def voice_maybe(req: MaybeRequest):
     """Entrada do orquestrador (Kiro): 'cabe áudio?'. Nunca é o caminho crítico
     da resposta — o Kiro já entregou o texto pelo seu próprio canal."""
-    _validate_engine(req.engine)  # 400 em engine inválido, antes de decidir
+    engine = _resolve_engine(req.engine)  # 400 em engine inválido; None -> estado global
     d = gate_decide(req.text, req.intent, req.channel, SAY_MAX_CHARS)
     if not d.audio:
         gate_log.info("gate decided=text reason=%s chars=%d", d.reason, len(req.text))
         return {"decided": "text", "reason": d.reason}
     try:
-        result = await synth_and_send(d.text, req.chat_id, req.caption, req.engine)
+        result = await synth_and_send(d.text, req.chat_id, req.caption, engine)
     except Exception as e:  # o gate absorve a falha do TTS: 1 ponto de falha pro Kiro
         gate_log.warning("gate approved but synth failed: %s: %s", type(e).__name__, e)
         return {"decided": "text", "reason": "service_down"}

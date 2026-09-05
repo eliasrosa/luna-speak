@@ -10,7 +10,14 @@ services:
     ports:
       - "8093:8080"
     env_file: .env
+    environment:
+      STATE_DIR: /data          # estado global de engine (#22): state.json persistente
+    volumes:
+      - lunaspeak_data:/data    # persiste o estado entre restart/recreate
     restart: unless-stopped
+
+volumes:
+  lunaspeak_data:
 
 # x-casaos é chave TOP-LEVEL do compose (o CasaOS lê aqui, não dentro do serviço).
 # 'hostname' fica fora do repo público (é o IP do host) — o deploy injeta se necessário.

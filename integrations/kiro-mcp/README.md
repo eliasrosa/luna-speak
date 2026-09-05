@@ -61,3 +61,17 @@ voice_maybe(text: str, chat_id: str, intent: "explicit"|"auto" = "auto") -> dict
 - O `sendVoice` sai com o **token do bot configurado no serviço**: pra o áudio
   chegar na mesma conversa em que o usuário fala com o agente, o serviço deve usar
   o token **desse** bot (config do serviço, fora deste repo).
+
+## Utilitário: `whichbot.py`
+
+Descobre `bot_id` + `@username` a partir do `TELEGRAM_BOT_TOKEN` de um `.env`,
+**sem imprimir o token** (chama a API `getMe`). Útil pra confirmar se dois `.env`
+(ex. serviço vs orquestrador) apontam pro mesmo bot.
+
+```bash
+python3 whichbot.py /caminho/do/.env
+# → bot_id=...  username=@...  name=...
+```
+
+Roda no host (lê o `.env` no corpo do script; nunca ecoa o token). Placeholder-safe.
+

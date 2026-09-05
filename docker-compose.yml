@@ -5,4 +5,11 @@ services:
     ports:
       - "8033:8080"
     env_file: .env
+    environment:
+      STATE_DIR: /data          # estado global de engine (#22): state.json persistente
+    volumes:
+      - lunaspeak_data:/data    # persiste o estado entre restart/recreate
     restart: unless-stopped
+
+volumes:
+  lunaspeak_data:

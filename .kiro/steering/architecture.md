@@ -80,16 +80,33 @@ uma com a outra é o erro clássico:
    O gate reprova `too_long` **antes** de sintetizar; o `/say` revalida o mesmo teto
    como defesa em profundidade.
 3. **QUAL engine** — `engine=auto|offline`. Só escolhe **qual** engine sintetiza,
-   **nunca** *se* sintetiza.
+   **nunca** *se* sintetiza. Resolvido por **precedência**: `engine` explícito no
+   request > **estado global** do serviço (`POST /mode`) > default de fábrica `auto`.
 
 Cada eixo tem seu próprio ponto de controle e nenhum interfere no outro.
 
+## Estado de engine: request vs global (#22)
+
+O `engine` tem duas fontes com precedência **request > global > `auto`**:
+
+- **Override por request** (#18): `engine` no `/say`/`/voice/maybe` vence sempre — pontual.
+- **Estado GLOBAL persistente** (#22): `POST /mode {engine}` grava o modo do serviço num
+  `state.json` num volume (`STATE_DIR`, default `/data`); vale pra todo request que **não**
+  mandar `engine` e **sobrevive a restart/recreate**. `GET /mode` e `global_engine` no
+  `/health` expõem o vigente.
+
+Isto **supersede** a decisão anterior (#18) de que o estado sticky moraria só no
+orquestrador: com o toggle no serviço, o orquestrador chama `/mode` uma vez ao
+ligar/desligar em vez de repetir `engine=offline` em cada chamada. O estado global é
+o **único** estado que o serviço guarda (ver trade-off abaixo).
+
 ## Trade-offs assumidos
 
-- **Serviço STATELESS.** Não guarda sessão, modo, nem histórico. O "modo offline"
-  sticky (liga até desligar) é estado do **orquestrador**, que passa `engine=offline`
-  em cada request. Consequência boa: o serviço escala/reinicia sem perder estado;
-  consequência a lembrar: quem chama é responsável por manter o modo.
+- **Quase-stateless — um único estado persistido.** O serviço não guarda sessão nem
+  histórico; o **estado global de engine** (#22) é a única exceção, e é deliberada:
+  um `state.json` num volume, não um DB, não estado em memória perdido no restart.
+  A gravação é atômica (arquivo temporário + `os.replace`); leitura ausente/ilegível
+  cai no default de fábrica `auto`. O override por request continua sem estado.
 - **Fonte única do limite.** `SAY_MAX_CHARS` é lido **só** em `app/main.py` e passado
   ao gate como parâmetro `max_chars`. Não há um segundo limite no gate — evita as
   duas fontes divergirem.
@@ -110,4 +127,5 @@ Detalhe de request/response no `README.md`. Em uma linha:
   `413 too_long` | `400 invalid_engine`. Núcleo de síntese.
 - `POST /voice/maybe {text, chat_id, intent?, channel?, engine?}` →
   `{decided:"audio"|"text", reason, ...}`. `/say` precedido do gate.
-- `GET /health` → engines, voz, limites, contadores. Sem efeito colateral.
+- `POST /mode {engine}` / `GET /mode` → grava/lê o estado global de engine (persistente).
+- `GET /health` → engines, voz, limites, contadores, `global_engine`. Sem efeito colateral.

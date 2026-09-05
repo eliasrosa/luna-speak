@@ -2,6 +2,7 @@
 .env.deploy
 __pycache__/
 *.pyc
+.venv/
 *.ogg
 *.wav
 *.mp3

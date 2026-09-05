@@ -31,6 +31,10 @@ EDGE_TIMEOUT = float(os.environ.get("EDGE_TIMEOUT", "8"))
 PIPER_BIN = os.environ.get("PIPER_BIN", "/opt/piper/piper")
 PIPER_MODEL = os.environ.get("PIPER_MODEL", "/voices/pt_BR-faber-medium.onnx")
 OPUS_BITRATE = os.environ.get("OPUS_BITRATE", "32k")
+# gate de "resposta curta": teto de caracteres do texto a sintetizar. Acima disso o /say
+# recusa com 413 (sinal estruturado) em vez de gerar um áudio longo e ruim de ouvir.
+# 0 (ou negativo) desliga o gate. Default ~600 chars ≈ até ~1 min de fala.
+SAY_MAX_CHARS = int(os.environ.get("SAY_MAX_CHARS", "600"))
 # hook de teste: força o fallback Piper (pula o Edge-TTS) sem precisar cortar a rede
 FORCE_PIPER = os.environ.get("FORCE_PIPER", "").lower() in ("1", "true", "yes")
 
@@ -88,6 +92,21 @@ async def _send_voice(chat_id: str, ogg_path: str, caption: str | None) -> None:
 async def say(req: SayRequest):
     if not req.text.strip():
         raise HTTPException(400, "text vazio")
+    # gate de "resposta curta": texto acima do teto vira áudio longo e ruim de ouvir.
+    # Recusamos com 413 e um payload estruturado para o chamador cair pra texto.
+    # (Não resumimos aqui — este serviço não tem LLM; e não truncamos, que cortaria
+    #  no meio de uma frase. Truncar/resumir/enviar-texto é decisão do orquestrador.)
+    if SAY_MAX_CHARS > 0 and len(req.text) > SAY_MAX_CHARS:
+        log.info("say recusado too_long chars=%d limit=%d", len(req.text), SAY_MAX_CHARS)
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "ok": False,
+                "reason": "too_long",
+                "chars": len(req.text),
+                "limit": SAY_MAX_CHARS,
+            },
+        )
     workdir = tempfile.mkdtemp(prefix="lunaspeak_")
     ogg = os.path.join(workdir, f"{uuid.uuid4().hex}.ogg")
     engine = "edge"
@@ -140,5 +159,6 @@ def health():
         "piper_available": os.path.exists(PIPER_BIN),
         "token_configured": bool(BOT_TOKEN),
         "force_piper": FORCE_PIPER,
+        "say_max_chars": SAY_MAX_CHARS,
         "engine_counts": ENGINE_COUNTS,
     }

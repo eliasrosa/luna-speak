@@ -36,7 +36,7 @@ cp .env.example .env   # OBRIGATÓRIO: preencher TELEGRAM_BOT_TOKEN
 docker compose up --build
 # POST http://localhost:8033/say
 curl -X POST localhost:8033/say -H 'Content-Type: application/json' \
-  -d '{"text":"Oi Elias!","chat_id":"<seu_chat_id>"}'
+  -d '{"text":"Olá, tudo certo?","chat_id":"<CHAT_ID>"}'
 ```
 
 > ⚠️ O `docker-compose.yml` usa `env_file: .env`. Se você pular o `cp .env.example .env`,
@@ -51,7 +51,40 @@ Deploy via `docker-compose-zimaos.yml` (imagem local, sem registry). Colocar o `
 
 ## Endpoints
 - `POST /say { text, chat_id, engine? }` — sintetiza e envia voice message. Retorna `{ok, engine, duration}`. Se o `text` passar de `SAY_MAX_CHARS`, responde **HTTP 413** com `{ok:false, reason:"too_long", chars, limit}` e **não** gera áudio (ver "Gate de resposta curta"). `engine` (`auto`|`offline`, default `auto`) escolhe a engine — ver "Modo offline".
-- `GET /health` — status + engines disponíveis (inclui `piper_available`, `token_configured`, `force_piper`, `say_max_chars`, `engines`).
+- `POST /voice/maybe { text, chat_id, intent?, channel?, engine? }` — entrada do **orquestrador**: aplica o gate de política ("cabe áudio?") e, se aprovar, sintetiza e envia. Retorna `{decided:"audio", engine, duration_ms, reason}` ou `{decided:"text", reason}` (`reason` ∈ `too_long` | `has_code_or_table` | `empty_after_normalize` | `unsupported_channel:<x>` | `service_down`). `intent` = `explicit` (usuário pediu voz) | `auto` (conversacional, default).
+- `GET /health` — status + engines disponíveis (inclui `edge_voice`, `piper_available`, `token_configured`, `force_piper`, `say_max_chars`, `engines`).
+
+## Configuração (env)
+
+Tudo é configurável por env, **sem rebuild** (edite o `.env` e reinicie). Ver `.env.example`.
+
+| Env | Default | O que faz |
+|---|---|---|
+| `TELEGRAM_BOT_TOKEN` | *(vazio)* | Token do bot que envia o `sendVoice`. **Obrigatório**; só no `.env`/secrets. |
+| `EDGE_VOICE` | `pt-BR-FranciscaNeural` | Voz do Edge-TTS (ver "Escolha de voz"). |
+| `EDGE_TIMEOUT` | `8` | Timeout (s) do Edge-TTS antes de cair pro Piper. |
+| `SAY_MAX_CHARS` | `600` | Teto de caracteres do `text`; acima disso recusa (ver "Gate de resposta curta"). `0` desliga. |
+| `OPUS_BITRATE` | `32k` | Bitrate do OGG/Opus gerado pelo ffmpeg. |
+| `FORCE_PIPER` | *(vazio)* | `1`/`true` força o Piper (pula o Edge) — hook de teste. Vazio em produção. |
+| `VOICE_OVERFLOW_MODE` | `text` | Política do gate no estouro: `text` (cai pra texto) ou `truncate` (corta e fala). |
+| `LOG_LEVEL` | `INFO` | Nível de log (`DEBUG`/`INFO`/`WARNING`/`ERROR`). |
+| `PIPER_BIN` / `PIPER_MODEL` | *(paths do container)* | Binário e modelo do Piper (raramente mudam). |
+
+O parâmetro `engine` (`auto`|`offline`) é **por request**, não env — ver "Modo offline".
+
+## Integração com o orquestrador
+
+O `POST /voice/maybe` é o ponto de entrada do **orquestrador** (o agente que fala com
+o usuário). A pasta [`integrations/kiro-mcp/`](integrations/kiro-mcp/README.md) traz o
+**cliente MCP** (`voice_maybe`) que o agente chama no seu turno, mais a regra de
+ativação pra colar no steering dele. O cliente é um wrapper fino e sem estado; a
+política de voz mora no serviço (`app/gate/`).
+
+## Documentação interna
+
+- [`.kiro/steering/architecture.md`](.kiro/steering/architecture.md) — decisões de design, fluxo de dados, fronteiras de módulo, os 3 eixos do gate.
+- [`.kiro/steering/conventions.md`](.kiro/steering/conventions.md) — env/config, higiene de repo público, estilo de issue/commit.
+- [`.kiro/steering/deploy.md`](.kiro/steering/deploy.md) — deploy no ZimaOS.
 
 ## Escolha de voz
 

@@ -34,8 +34,8 @@ POST /say { text, chat_id }
 ```bash
 cp .env.example .env   # OBRIGATÓRIO: preencher TELEGRAM_BOT_TOKEN
 docker compose up --build
-# POST http://localhost:8080/say
-curl -X POST localhost:8080/say -H 'Content-Type: application/json' \
+# POST http://localhost:8033/say
+curl -X POST localhost:8033/say -H 'Content-Type: application/json' \
   -d '{"text":"Oi Elias!","chat_id":"<seu_chat_id>"}'
 ```
 

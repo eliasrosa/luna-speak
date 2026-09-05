@@ -42,9 +42,9 @@ Config por env: `ZIMA_USER`, `ZIMA_HOST`, `APP_DIR`, `BUILD_DIR`, `IMAGE`.
 |------|-------|
 | IP | `<ZIMAOS_IP>` |
 | Usuário SSH | `<ZIMAOS_USER>` |
-| App dir (CasaOS) | `/var/lib/casaos/apps/luna-speak` (é o que dá o **card** no painel) |
-| Build dir | `/media/ZimaOS-HD/AppData/luna-speak/build` |
-| Porta | `8093` (host) → `8080` (container) |
+| App dir (CasaOS) | `<APP_DIR>` — convenção CasaOS `…/casaos/apps/luna-speak`; subir por aí é o que dá o **card** no painel |
+| Build dir | `<BUILD_DIR>` — pasta de build no storage do host |
+| Porta | `<HOST_PORT>` (host) → `8080` (container) |
 
 ## Secrets
 
@@ -56,6 +56,6 @@ Config por env: `ZIMA_USER`, `ZIMA_HOST`, `APP_DIR`, `BUILD_DIR`, `IMAGE`.
 
 - Imagem local (`pull_policy: never`) — não publica em registry.
 - O compose de produção é o `docker-compose-zimaos.yml` (não o `docker-compose.yml` de dev).
-- `APP_DIR` = `/var/lib/casaos/apps/luna-speak` — subir por aí (não pelo AppData) é o que registra o **card** no CasaOS.
+- `APP_DIR` deve ficar sob o dir de apps do CasaOS (convenção `…/casaos/apps/<app>`) — subir por aí (não pelo AppData) é o que registra o **card** no CasaOS.
 - Nunca `sudo` no workflow; operações privilegiadas via SSH.
-- Dados de infra pessoal (IP/usuário) só neste steering, com placeholders — o repo é **público**.
+- Dados de infra pessoal (IP/usuário/paths/porta) só via placeholders — o repo é **público**.

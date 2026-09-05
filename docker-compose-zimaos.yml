@@ -1,8 +1,9 @@
 # Produção no ZimaOS (imagem local, sem registry)
-# Deploy: copiar pro APP_DIR do CasaOS, colocar .env ao lado, docker compose up -d
+# Deploy: copiar pro APP_DIR do CasaOS, colocar .env ao lado, docker compose up -d --build
 services:
   lunaspeak:
-    image: lunaspeak:latest
+    build: .
+    image: luna-speak:latest
     container_name: lunaspeak
     ports:
       - "8093:8080"

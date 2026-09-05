@@ -1,0 +1,35 @@
+name: "🐛 Bug"
+description: "Algo não está funcionando como esperado"
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: descricao
+    attributes:
+      label: O que aconteceu
+      description: Descreva o comportamento observado.
+    validations:
+      required: true
+  - type: textarea
+    id: esperado
+    attributes:
+      label: Comportamento esperado
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Como reproduzir
+      placeholder: |
+        1. `docker compose up`
+        2. `curl -X POST localhost:8080/say -d '{...}'`
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: ambiente
+    attributes:
+      label: Ambiente / logs (opcional)
+      description: Versão, engine (edge/piper), trecho de log relevante. NÃO inclua tokens/segredos.
+    validations:
+      required: false

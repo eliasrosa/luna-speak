@@ -1,0 +1,41 @@
+name: "✨ Feature / Task"
+description: "Nova funcionalidade ou tarefa técnica"
+title: "[Feat]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: contexto
+    attributes:
+      label: Contexto / Problema
+      description: Por que isso é necessário? Qual dor resolve?
+      placeholder: "Hoje o serviço só faz X; precisamos de Y porque..."
+    validations:
+      required: true
+  - type: textarea
+    id: proposta
+    attributes:
+      label: Proposta
+      description: O que fazer, objetivamente. Liste passos se ajudar.
+      placeholder: |
+        - Adicionar endpoint POST /...
+        - Integrar com ...
+    validations:
+      required: true
+  - type: textarea
+    id: aceite
+    attributes:
+      label: Critérios de aceite
+      description: Como saber que está pronto? (checklist verificável)
+      placeholder: |
+        - [ ] Endpoint responde 200 com payload válido
+        - [ ] Fallback dispara em caso de falha
+        - [ ] Testado local via docker compose
+    validations:
+      required: true
+  - type: textarea
+    id: notas
+    attributes:
+      label: Notas técnicas (opcional)
+      description: Trade-offs, exemplos de request/response, links de referência.
+    validations:
+      required: false

@@ -40,7 +40,7 @@ curl -X POST localhost:8080/say -H 'Content-Type: application/json' \
 ```
 
 ### ZimaOS (produção)
-Deploy via `docker-compose-zimaos.yml` (bind mounts em /DATA/AppData/lunaspeak, imagem local). Ver `.kiro/steering/deploy.md`.
+Deploy via `docker-compose-zimaos.yml` (imagem local, sem registry). Colocar o `.env` ao lado do compose no diretório do app e `docker compose up -d`.
 
 ## Endpoints
 - `POST /say { text, chat_id }` — sintetiza e envia voice message. Retorna `{ok, engine, duration}`.

@@ -1,0 +1,13 @@
+# Produção no ZimaOS (imagem local, sem registry)
+# Deploy: copiar pro APP_DIR do CasaOS, colocar .env ao lado, docker compose up -d
+services:
+  lunaspeak:
+    image: lunaspeak:latest
+    container_name: lunaspeak
+    ports:
+      - "8093:8080"
+    env_file: .env
+    restart: unless-stopped
+    x-casaos:
+      title: LunaSpeak
+      description: Microserviço TTS (voz do assistente) com fallback Edge-TTS -> Piper

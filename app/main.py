@@ -18,6 +18,8 @@ EDGE_TIMEOUT = float(os.environ.get("EDGE_TIMEOUT", "8"))
 PIPER_BIN = os.environ.get("PIPER_BIN", "/opt/piper/piper")
 PIPER_MODEL = os.environ.get("PIPER_MODEL", "/voices/pt_BR-faber-medium.onnx")
 OPUS_BITRATE = os.environ.get("OPUS_BITRATE", "32k")
+# hook de teste: força o fallback Piper (pula o Edge-TTS) sem precisar cortar a rede
+FORCE_PIPER = os.environ.get("FORCE_PIPER", "").lower() in ("1", "true", "yes")
 
 
 class SayRequest(BaseModel):
@@ -78,6 +80,8 @@ async def say(req: SayRequest):
     engine = "edge"
     try:
         try:
+            if FORCE_PIPER:
+                raise RuntimeError("FORCE_PIPER ligado: pulando Edge-TTS")
             await _edge_tts(req.text, ogg)  # 1) padrão: Francisca online
         except Exception:
             engine = "piper"                # 2) fallback offline: Piper faber
@@ -105,4 +109,5 @@ def health():
         "piper_model": PIPER_MODEL,
         "piper_available": os.path.exists(PIPER_BIN),
         "token_configured": bool(BOT_TOKEN),
+        "force_piper": FORCE_PIPER,
     }

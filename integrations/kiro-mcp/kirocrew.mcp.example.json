@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "voice-gate": {
+      "command": "python3",
+      "args": ["/ABSOLUTE/PATH/para/voice_gate_mcp.py"],
+      "env": {
+        "LUNASPEAK_URL": "http://<HOST>:<PORTA>"
+      }
+    }
+  }
+}

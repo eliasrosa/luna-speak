@@ -16,7 +16,7 @@ POST /say { text, chat_id }
    │
    ├─ 3. converte pra OGG/Opus (formato voice message)
    └─ 4. Telegram Bot API sendVoice → chat
-        └─ responde { ok, engine: "edge"|"piper", duration }
+        └─ responde { ok, engine: "edge"|"piper", duration_ms }
 ```
 
 - **Padrão:** Edge-TTS voz **pt-BR-FranciscaNeural** (feminina, natural, grátis, mas online).
@@ -50,8 +50,8 @@ Piper — a resposta volta com `"engine":"piper"`. Deixe vazio em produção.
 Deploy via `docker-compose-zimaos.yml` (imagem local, sem registry). Colocar o `.env` ao lado do compose no diretório do app e `docker compose up -d`.
 
 ## Endpoints
-- `POST /say { text, chat_id, engine? }` — sintetiza e envia voice message. Retorna `{ok, engine, duration}`. Se o `text` passar de `SAY_MAX_CHARS`, responde **HTTP 413** com `{ok:false, reason:"too_long", chars, limit}` e **não** gera áudio (ver "Gate de resposta curta"). `engine` (`auto`|`offline`, default `auto`) escolhe a engine — ver "Modo offline".
-- `POST /voice/maybe { text, chat_id, intent?, channel?, engine? }` — entrada do **orquestrador**: aplica o gate de política ("cabe áudio?") e, se aprovar, sintetiza e envia. Retorna `{decided:"audio", engine, duration_ms, reason}` ou `{decided:"text", reason}` (`reason` ∈ `too_long` | `has_code_or_table` | `empty_after_normalize` | `unsupported_channel:<x>` | `service_down`). `intent` = `explicit` (usuário pediu voz) | `auto` (conversacional, default).
+- `POST /say { text, chat_id, engine?, caption? }` — sintetiza e envia voice message. Retorna `{ok, engine, duration_ms}`. Se o `text` passar de `SAY_MAX_CHARS`, responde **HTTP 413** com `{ok:false, reason:"too_long", chars, limit}` e **não** gera áudio (ver "Gate de resposta curta"). `engine` (`auto`|`offline`, default `auto`) escolhe a engine — ver "Modo offline".
+- `POST /voice/maybe { text, chat_id, intent?, channel?, engine?, caption? }` — entrada do **orquestrador**: aplica o gate de política ("cabe áudio?") e, se aprovar, sintetiza e envia. Retorna `{decided:"audio", engine, duration_ms, reason}` ou `{decided:"text", reason}` (`reason` ∈ `too_long` | `has_code_or_table` | `empty_after_normalize` | `unsupported_channel:<x>` | `service_down`). `intent` = `explicit` (usuário pediu voz) | `auto` (conversacional, default).
 - `GET /health` — status + engines disponíveis (inclui `edge_voice`, `piper_available`, `token_configured`, `force_piper`, `say_max_chars`, `engines`, `global_engine`).
 - `POST /mode { engine }` — grava o **estado global** de engine do serviço (`auto`|`offline`), **persistente** entre restarts. `GET /mode` devolve o estado vigente. Ver "Modo offline".
 

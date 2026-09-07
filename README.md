@@ -54,6 +54,12 @@ Deploy via `docker-compose-zimaos.yml` (imagem local, sem registry). Colocar o `
 - `POST /voice/maybe { text, chat_id, intent?, channel?, engine?, caption? }` — entrada do **orquestrador**: aplica o gate de política ("cabe áudio?") e, se aprovar, sintetiza e envia. Retorna `{decided:"audio", engine, duration_ms, reason}` ou `{decided:"text", reason}` (`reason` ∈ `too_long` | `has_code_or_table` | `empty_after_normalize` | `unsupported_channel:<x>` | `service_down`). `intent` = `explicit` (usuário pediu voz) | `auto` (conversacional, default).
 - `GET /health` — status + engines disponíveis (inclui `edge_voice`, `piper_available`, `token_configured`, `force_piper`, `say_max_chars`, `engines`, `global_engine`).
 - `POST /mode { engine }` — grava o **estado global** de engine do serviço (`auto`|`offline`), **persistente** entre restarts. `GET /mode` devolve o estado vigente. Ver "Modo offline".
+- `POST /notify { chat_id, text, disable_web_page_preview? }` — envia uma **mensagem de texto** ao Telegram via `sendMessage` (hub de notificação: os crons do orquestrador, que rodam num sandbox sem acesso ao token, delegam o envio aqui). Retorna `{ok:true, message_id, chat_id}`. `500` se o token não estiver configurado; `502` se o Telegram recusar (ex: `chat not found`). Texto puro, sem gate — para alertas de sistema.
+
+  ```bash
+  curl -X POST localhost:8033/notify -H 'Content-Type: application/json' \
+    -d '{"chat_id": "<CHAT_ID>", "text": "🔔 alerta"}'
+  ```
 
 ## Configuração (env)
 

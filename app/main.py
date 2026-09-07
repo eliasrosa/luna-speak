@@ -269,6 +269,37 @@ def health():
     }
 
 
+# --- Notify: mensagem de TEXTO pro Telegram (hub de notificação dos crons) ---
+# Os crons do orquestrador rodam num sandbox que bloqueia ler credencial (.env),
+# então delegam pro LunaSpeak (que já tem o BOT_TOKEN) o envio via sendMessage.
+# Alerta de sistema = texto puro, SEM gate/normalização (diferente do /voice/maybe).
+class NotifyRequest(BaseModel):
+    chat_id: str
+    text: str
+    disable_web_page_preview: bool = True
+
+
+@app.post("/notify")
+async def notify(req: NotifyRequest):
+    if not BOT_TOKEN:
+        raise HTTPException(500, "TELEGRAM_BOT_TOKEN não configurado")
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": req.chat_id,
+        "text": req.text,
+        "disable_web_page_preview": req.disable_web_page_preview,
+    }
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.post(url, json=payload)
+    body = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+    if r.status_code != 200 or not body.get("ok"):
+        log.warning("notify sendMessage falhou status=%s body=%s", r.status_code, r.text[:200])
+        raise HTTPException(502, f"Telegram sendMessage falhou: {r.text[:200]}")
+    msg = body.get("result", {})
+    log.info("notify enviado chat_id=%s chars=%d msg_id=%s", req.chat_id, len(req.text), msg.get("message_id"))
+    return {"ok": True, "message_id": msg.get("message_id"), "chat_id": req.chat_id}
+
+
 # --- Voice Gate: política de voz (o "quando" da issue #3) ---
 # A LÓGICA (decisão + normalização) vive apartada em app/gate/. Só o handler HTTP
 # mora aqui, pra reusar `app` e `synth_and_send` sem import tardio nem ciclo.

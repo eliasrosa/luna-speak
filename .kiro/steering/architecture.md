@@ -128,4 +128,9 @@ Detalhe de request/response no `README.md`. Em uma linha:
 - `POST /voice/maybe {text, chat_id, intent?, channel?, engine?}` →
   `{decided:"audio"|"text", reason, ...}`. `/say` precedido do gate.
 - `POST /mode {engine}` / `GET /mode` → grava/lê o estado global de engine (persistente).
+- `POST /notify {chat_id, text, disable_web_page_preview?}` → `{ok, message_id, chat_id}` |
+  `500` (token ausente) | `502` (Telegram recusou). Mensagem de **texto** via `sendMessage`,
+  **sem gate/normalização** — é o hub de notificação: os crons do orquestrador rodam num
+  sandbox que bloqueia ler o token, então delegam o envio aqui. Distinto do `/voice/maybe`
+  (que é áudio governado por política).
 - `GET /health` → engines, voz, limites, contadores, `global_engine`. Sem efeito colateral.

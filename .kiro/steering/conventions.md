@@ -21,7 +21,8 @@ imagem. Regras:
 
 Envs atuais: `TELEGRAM_BOT_TOKEN`, `EDGE_VOICE`, `EDGE_TIMEOUT`, `PIPER_BIN`,
 `PIPER_MODEL`, `OPUS_BITRATE`, `SAY_MAX_CHARS`, `FORCE_PIPER`, `VOICE_OVERFLOW_MODE`,
-`LOG_LEVEL`. Tabela com defaults no `README.md`.
+`STATE_DIR` (dir do `state.json` do estado global de engine, #22), `LOG_LEVEL`. Tabela
+com defaults no `README.md`.
 
 ## Higiene de repositório PÚBLICO
 

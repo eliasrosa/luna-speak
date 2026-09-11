@@ -50,11 +50,11 @@ Piper — a resposta volta com `"engine":"piper"`. Deixe vazio em produção.
 Deploy via `docker-compose-zimaos.yml` (imagem local, sem registry). Colocar o `.env` ao lado do compose no diretório do app e `docker compose up -d`.
 
 ## Endpoints
-- `POST /say { text, chat_id, engine?, caption? }` — sintetiza e envia voice message. Retorna `{ok, engine, duration_ms}`. Se o `text` passar de `SAY_MAX_CHARS`, responde **HTTP 413** com `{ok:false, reason:"too_long", chars, limit}` e **não** gera áudio (ver "Gate de resposta curta"). `engine` (`auto`|`offline`, default `auto`) escolhe a engine — ver "Modo offline".
-- `POST /voice/maybe { text, chat_id, intent?, channel?, engine?, caption? }` — entrada do **orquestrador**: aplica o gate de política ("cabe áudio?") e, se aprovar, sintetiza e envia. Retorna `{decided:"audio", engine, duration_ms, reason}` ou `{decided:"text", reason}` (`reason` ∈ `too_long` | `has_code_or_table` | `empty_after_normalize` | `unsupported_channel:<x>` | `service_down`). `intent` = `explicit` (usuário pediu voz) | `auto` (conversacional, default).
+- `POST /say { text, chat_id, engine?, caption?, bot_token? }` — sintetiza e envia voice message. Retorna `{ok, engine, duration_ms}`. Se o `text` passar de `SAY_MAX_CHARS`, responde **HTTP 413** com `{ok:false, reason:"too_long", chars, limit}` e **não** gera áudio (ver "Gate de resposta curta"). `engine` (`auto`|`offline`, default `auto`) escolhe a engine — ver "Modo offline". `bot_token` opcional roteia o envio para outro bot — ver "Roteamento de bot".
+- `POST /voice/maybe { text, chat_id, intent?, channel?, engine?, caption?, bot_token? }` — entrada do **orquestrador**: aplica o gate de política ("cabe áudio?") e, se aprovar, sintetiza e envia. Retorna `{decided:"audio", engine, duration_ms, reason}` ou `{decided:"text", reason}` (`reason` ∈ `too_long` | `has_code_or_table` | `empty_after_normalize` | `unsupported_channel:<x>` | `service_down`). `intent` = `explicit` (usuário pediu voz) | `auto` (conversacional, default). `bot_token` opcional — ver "Roteamento de bot".
 - `GET /health` — status + engines disponíveis (inclui `edge_voice`, `piper_available`, `token_configured`, `force_piper`, `say_max_chars`, `engines`, `global_engine`).
 - `POST /mode { engine }` — grava o **estado global** de engine do serviço (`auto`|`offline`), **persistente** entre restarts. `GET /mode` devolve o estado vigente. Ver "Modo offline".
-- `POST /notify { chat_id, text, disable_web_page_preview? }` — envia uma **mensagem de texto** ao Telegram via `sendMessage` (hub de notificação: os crons do orquestrador, que rodam num sandbox sem acesso ao token, delegam o envio aqui). Retorna `{ok:true, message_id, chat_id}`. `500` se o token não estiver configurado; `502` se o Telegram recusar (ex: `chat not found`). Texto puro, sem gate — para alertas de sistema.
+- `POST /notify { chat_id, text, disable_web_page_preview?, bot_token? }` — envia uma **mensagem de texto** ao Telegram via `sendMessage` (hub de notificação: os crons do orquestrador, que rodam num sandbox sem acesso ao token, delegam o envio aqui). Retorna `{ok:true, message_id, chat_id}`. `500` se o token não estiver configurado; `502` se o Telegram recusar (ex: `chat not found`). Texto puro, sem gate — para alertas de sistema. `bot_token` opcional — ver "Roteamento de bot".
 
   ```bash
   curl -X POST localhost:8033/notify -H 'Content-Type: application/json' \
@@ -192,6 +192,28 @@ em vez de repetir `engine=offline` em toda chamada. `engine` inválido → **HTT
 
 Isto é ortogonal ao gate de tamanho (`SAY_MAX_CHARS`) e ao gate de ativação: `engine`
 só escolhe **qual** engine sintetiza, não **se** sintetiza.
+
+## Roteamento de bot (`bot_token`)
+
+`bot_token` é **opcional** em `/say`, `/voice/maybe` e `/notify`:
+
+- **Omitido** → cai no `TELEGRAM_BOT_TOKEN` do env (comportamento padrão, retrocompatível).
+- **Presente** → o envio é roteado para **aquele** bot.
+
+Isso habilita uso **multi-conta / multi-canal** sem estado no serviço: cada chamador
+decide o bot por request. O `chat_id` já era por request; agora o bot também é.
+
+```jsonc
+// conta/canal da empresa: bot próprio + chat próprio
+POST /say { "text": "...", "chat_id": "<CHAT_EMPRESA>", "bot_token": "<TOKEN_BOT_EMPRESA>" }
+
+// conta pessoal: sem bot_token, usa o bot do env
+POST /say { "text": "...", "chat_id": "<CHAT_PESSOAL>" }
+```
+
+> **Nota de arquitetura**: este é um passo transitório. O desacoplamento total do Telegram
+> (o LunaSpeak virar TTS puro e a entrega migrar para um hub multicanal dedicado) é uma
+> evolução planejada — o `bot_token` por request resolve o multi-conta enquanto isso.
 
 ## Segurança
 - `TELEGRAM_BOT_TOKEN` só no `.env` (gitignored) / secrets. Nunca versionado.

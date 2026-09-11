@@ -104,6 +104,7 @@ class SayRequest(BaseModel):
     chat_id: str
     caption: str | None = None
     engine: str | None = None     # omitido -> estado global; "auto"|"offline" = override
+    bot_token: str | None = None  # omitido -> TELEGRAM_BOT_TOKEN do env; senão roteia p/ este bot
 
 
 def _to_ogg(src: str, dst: str) -> None:
@@ -135,10 +136,11 @@ def _piper_tts(text: str, ogg_out: str) -> None:
     _to_ogg(wav, ogg_out)
 
 
-async def _send_voice(chat_id: str, ogg_path: str, caption: str | None) -> None:
-    if not BOT_TOKEN:
+async def _send_voice(chat_id: str, ogg_path: str, caption: str | None, bot_token: str | None = None) -> None:
+    token = bot_token or BOT_TOKEN
+    if not token:
         raise HTTPException(500, "TELEGRAM_BOT_TOKEN não configurado")
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendVoice"
+    url = f"https://api.telegram.org/bot{token}/sendVoice"
     async with httpx.AsyncClient(timeout=30) as client:
         with open(ogg_path, "rb") as f:
             data = {"chat_id": chat_id}
@@ -149,7 +151,7 @@ async def _send_voice(chat_id: str, ogg_path: str, caption: str | None) -> None:
         raise HTTPException(502, f"Telegram sendVoice falhou: {r.text[:200]}")
 
 
-async def synth_and_send(text: str, chat_id: str, caption: str | None = None, engine: str = "auto") -> dict:
+async def synth_and_send(text: str, chat_id: str, caption: str | None = None, engine: str = "auto", bot_token: str | None = None) -> dict:
     """Sintetiza `text` (Edge->Piper), converte e envia via Telegram sendVoice.
 
     Núcleo reusável do /say: o handler HTTP e o Voice Gate (app/gate) chamam
@@ -157,6 +159,10 @@ async def synth_and_send(text: str, chat_id: str, caption: str | None = None, en
 
     `engine`: "auto" tenta o Edge-TTS e cai pro Piper por FALHA; "offline" pula o
     Edge e sintetiza direto no Piper local (nenhuma chamada de rede ao Edge).
+
+    `bot_token`: bot do Telegram a usar no envio; se None, cai no TELEGRAM_BOT_TOKEN
+    do env (default). Permite roteamento multi-conta/multi-canal (ex. bot da empresa
+    vs. bot pessoal) sem estado no serviço — o chamador decide o bot por request.
     """
     _validate_engine(engine)
     if not text.strip():
@@ -196,7 +202,7 @@ async def synth_and_send(text: str, chat_id: str, caption: str | None = None, en
                 log.warning("edge-tts falhou, caindo pro piper: %s", edge_error)
                 engine_used = "piper"       # 2) fallback offline: Piper faber
                 _piper_tts(text, ogg)
-        await _send_voice(chat_id, ogg, caption)  # 3) envia voice message
+        await _send_voice(chat_id, ogg, caption, bot_token)  # 3) envia voice message
         ENGINE_COUNTS[engine_used] = ENGINE_COUNTS.get(engine_used, 0) + 1
         # CA#1: log estruturado com engine + duração por request
         log.info(
@@ -225,7 +231,7 @@ async def synth_and_send(text: str, chat_id: str, caption: str | None = None, en
 
 @app.post("/say")
 async def say(req: SayRequest):
-    return await synth_and_send(req.text, req.chat_id, req.caption, _resolve_engine(req.engine))
+    return await synth_and_send(req.text, req.chat_id, req.caption, _resolve_engine(req.engine), req.bot_token)
 
 
 class ModeRequest(BaseModel):
@@ -277,13 +283,15 @@ class NotifyRequest(BaseModel):
     chat_id: str
     text: str
     disable_web_page_preview: bool = True
+    bot_token: str | None = None  # omitido -> TELEGRAM_BOT_TOKEN do env; senão roteia p/ este bot
 
 
 @app.post("/notify")
 async def notify(req: NotifyRequest):
-    if not BOT_TOKEN:
+    token = req.bot_token or BOT_TOKEN
+    if not token:
         raise HTTPException(500, "TELEGRAM_BOT_TOKEN não configurado")
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {
         "chat_id": req.chat_id,
         "text": req.text,
@@ -310,6 +318,7 @@ class MaybeRequest(BaseModel):
     channel: str = "telegram"
     caption: str | None = None
     engine: str | None = None     # omitido -> estado global; "auto"|"offline" = override
+    bot_token: str | None = None  # omitido -> TELEGRAM_BOT_TOKEN do env; senão roteia p/ este bot
 
 
 @app.post("/voice/maybe")
@@ -322,7 +331,7 @@ async def voice_maybe(req: MaybeRequest):
         gate_log.info("gate decided=text reason=%s chars=%d", d.reason, len(req.text))
         return {"decided": "text", "reason": d.reason}
     try:
-        result = await synth_and_send(d.text, req.chat_id, req.caption, engine)
+        result = await synth_and_send(d.text, req.chat_id, req.caption, engine, req.bot_token)
     except Exception as e:  # o gate absorve a falha do TTS: 1 ponto de falha pro Kiro
         gate_log.warning("gate approved but synth failed: %s: %s", type(e).__name__, e)
         return {"decided": "text", "reason": "service_down"}

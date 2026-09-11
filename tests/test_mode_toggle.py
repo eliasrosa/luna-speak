@@ -38,7 +38,7 @@ def main(tmp_path, monkeypatch):
         calls["piper"] += 1
         open(ogg_out, "wb").close()
 
-    async def fake_send(chat_id, ogg_path, caption):
+    async def fake_send(chat_id, ogg_path, caption, bot_token=None):
         pass
 
     monkeypatch.setattr(m, "_edge_tts", fake_edge)

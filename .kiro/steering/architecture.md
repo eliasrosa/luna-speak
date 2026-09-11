@@ -123,14 +123,23 @@ o **único** estado que o serviço guarda (ver trade-off abaixo).
 
 Detalhe de request/response no `README.md`. Em uma linha:
 
-- `POST /say {text, chat_id, engine?, caption?}` → `{ok, engine, duration_ms}` |
+- `POST /say {text, chat_id, engine?, caption?, bot_token?}` → `{ok, engine, duration_ms}` |
   `413 too_long` | `400 invalid_engine`. Núcleo de síntese.
-- `POST /voice/maybe {text, chat_id, intent?, channel?, engine?}` →
+- `POST /voice/maybe {text, chat_id, intent?, channel?, engine?, bot_token?}` →
   `{decided:"audio"|"text", reason, ...}`. `/say` precedido do gate.
 - `POST /mode {engine}` / `GET /mode` → grava/lê o estado global de engine (persistente).
-- `POST /notify {chat_id, text, disable_web_page_preview?}` → `{ok, message_id, chat_id}` |
+- `POST /notify {chat_id, text, disable_web_page_preview?, bot_token?}` → `{ok, message_id, chat_id}` |
   `500` (token ausente) | `502` (Telegram recusou). Mensagem de **texto** via `sendMessage`,
   **sem gate/normalização** — é o hub de notificação: os crons do orquestrador rodam num
   sandbox que bloqueia ler o token, então delegam o envio aqui. Distinto do `/voice/maybe`
   (que é áudio governado por política).
 - `GET /health` → engines, voz, limites, contadores, `global_engine`. Sem efeito colateral.
+
+### Roteamento de bot por request (`bot_token`)
+
+`bot_token` é **opcional** em `/say`, `/voice/maybe` e `/notify`. Se **omitido**, cai no
+`TELEGRAM_BOT_TOKEN` do env (default histórico — retrocompatível). Se **presente**, roteia
+a entrega para AQUELE bot. Isso habilita multi-conta/multi-canal (ex. bot pessoal vs. bot
+da empresa) **sem estado no serviço**: o chamador decide o bot por request. O `chat_id` já
+era por request; agora o bot também é. Passo transitório rumo ao desacoplamento total do
+Telegram (ver F-27/F-27a no backlog — o hub de entrega Íris).
